@@ -1,89 +1,131 @@
-# ACT: Action Chunking with Transformers
+# VTLA-ACT: Vision-Tactile-Language ACT
 
-### *New*: [ACT tuning tips](https://docs.google.com/document/d/1FVIZfoALXg_ZkYKaYVh-qOlaXveq5CtvJHXkY25eYhs/edit?usp=sharing)
-TL;DR: if your ACT policy is jerky or pauses in the middle of an episode, just train for longer! Success rate and smoothness can improve way after loss plateaus.
+本项目基于 [ACT (Action Chunking with Transformers)](https://github.com/tonyzhaozh/act) 框架，扩展支持 **触觉模态** 和 **ManiSkill 仿真环境**。
 
-#### Project Website: https://tonyzhaozh.github.io/aloha/
+## 🚀 快速开始
 
-This repo contains the implementation of ACT, together with 2 simulated environments:
-Transfer Cube and Bimanual Insertion. You can train and evaluate ACT in sim or real.
-For real, you would also need to install [ALOHA](https://github.com/tonyzhaozh/aloha).
+### 环境安装
 
-### Updates:
-You can find all scripted/human demo for simulated environments [here](https://drive.google.com/drive/folders/1gPR03v05S1xiInoVJn7G7VJ9pDCnxq9O?usp=share_link).
+```bash
+# 使用 uv 安装依赖
+uv sync
 
+# 或使用 conda
+conda env create -f conda_env.yaml
+conda activate aloha
+```
 
-### Repo Structure
-- ``imitate_episodes.py`` Train and Evaluate ACT
-- ``policy.py`` An adaptor for ACT policy
-- ``detr`` Model definitions of ACT, modified from DETR
-- ``sim_env.py`` Mujoco + DM_Control environments with joint space control
-- ``ee_sim_env.py`` Mujoco + DM_Control environments with EE space control
-- ``scripted_policy.py`` Scripted policies for sim environments
-- ``constants.py`` Constants shared across files
-- ``utils.py`` Utils such as data loading and helper functions
-- ``visualize_episodes.py`` Save videos from a .hdf5 dataset
+### ManiSkill 数据采集
 
+#### 1. 下载官方演示数据
 
-### Installation
+```bash
+uv run python -m mani_skill.utils.download_demo PickCube-v1
+```
 
-    conda create -n aloha python=3.8.10
-    conda activate aloha
-    pip install torchvision
-    pip install torch
-    pip install pyquaternion
-    pip install pyyaml
-    pip install rospkg
-    pip install pexpect
-    pip install mujoco==2.3.7
-    pip install dm_control==1.0.14
-    pip install opencv-python
-    pip install matplotlib
-    pip install einops
-    pip install packaging
-    pip install h5py
-    pip install ipython
-    cd act/detr && pip install -e .
+演示数据将保存到 `~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.h5`
 
-### Example Usages
+#### 2. 采集带触觉数据的 VTLA 数据集
 
-To set up a new terminal, run:
+```bash
+uv run scripts/record_maniskill_episodes.py \
+    --env_id PickCube-v1 \
+    --dataset_dir data/maniskill_pickcube \
+    --demo_path ~/.maniskill/demos/PickCube-v1/motionplanning/trajectory.h5
+```
 
-    conda activate aloha
-    cd <path to act repo>
+**参数说明：**
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--env_id` | `PickCube-v1` | ManiSkill 环境 ID |
+| `--dataset_dir` | 必需 | 数据保存目录 |
+| `--demo_path` | 必需 | 官方 demo 轨迹文件路径 |
+| `--num_episodes` | `None` | 采集的轨迹数量（默认全部） |
+| `--control_mode` | `pd_joint_pos` | 控制模式（需与 demo 匹配） |
+| `--camera_names` | `['base_camera']` | 需要采集的相机名称 |
 
-### Simulated experiments
+#### 3. 转换为 ACT 训练格式
 
-We use ``sim_transfer_cube_scripted`` task in the examples below. Another option is ``sim_insertion_scripted``.
-To generated 50 episodes of scripted data, run:
+```bash
+uv run scripts/convert_maniskill_to_act.py \
+    --input_dir data/maniskill_pickcube \
+    --output_dir data/maniskill_pickcube_act
+```
 
-    python3 record_sim_episodes.py \
-    --task_name sim_transfer_cube_scripted \
-    --dataset_dir <data save dir> \
-    --num_episodes 50
+### 训练触觉增强 ACT 模型
 
-To can add the flag ``--onscreen_render`` to see real-time rendering.
-To visualize the episode after it is collected, run
+```bash
+uv run imitate_episodes.py \
+    --task_name maniskill_pickcube_tactile \
+    --ckpt_dir checkpoints/pickcube_tactile \
+    --policy_class ACT \
+    --batch_size 8 \
+    --num_epochs 2000
+```
 
-    python3 visualize_episodes.py --dataset_dir <data save dir> --episode_idx 0
+### ManiSkill 在线验证
 
-To train ACT:
-    
-    # Transfer Cube task
-    python3 imitate_episodes.py \
-    --task_name sim_transfer_cube_scripted \
-    --ckpt_dir <ckpt dir> \
-    --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 --batch_size 8 --dim_feedforward 3200 \
-    --num_epochs 2000  --lr 1e-5 \
-    --seed 0
+```bash
+uv run scripts/evaluate_maniskill.py \
+    --env_id PickCube-v1 \
+    --ckpt_path checkpoints/pickcube_tactile/policy_best.ckpt \
+    --num_episodes 50 \
+    --use_tactile
+```
 
+## 📁 数据格式
 
-To evaluate the policy, run the same command but add ``--eval``. This loads the best validation checkpoint.
-The success rate should be around 90% for transfer cube, and around 50% for insertion.
-To enable temporal ensembling, add flag ``--temporal_agg``.
-Videos will be saved to ``<ckpt_dir>`` for each rollout.
-You can also add ``--onscreen_render`` to see real-time rendering during evaluation.
+采集的数据以 HDF5 格式保存，每个 episode 一个文件：
 
-For real-world data where things can be harder to model, train for at least 5000 epochs or 3-4 times the length after the loss has plateaued.
-Please refer to [tuning tips](https://docs.google.com/document/d/1FVIZfoALXg_ZkYKaYVh-qOlaXveq5CtvJHXkY25eYhs/edit?usp=sharing) for more info.
+```
+episode_X.hdf5
+├── observations/
+│   ├── qpos          (T, 9)     # 关节位置
+│   ├── qvel          (T, 9)     # 关节速度
+│   ├── tactile       (T, 6)     # 触觉力向量 [左手指xyz, 右手指xyz]
+│   └── images/
+│       └── base_camera  (T, H, W, 3)  # RGB 图像
+└── action            (T, 8)     # 动作
+```
+**注意**：如果是通过 `record_maniskill_episodes.py` 采集的数据，同目录下还会生成 `episode_X_init_state.pkl` 文件，包含完整的初始环境状态字典。
 
+## ⚠️ 注意事项
+
+### ManiSkill 数据采集
+
+1. **环境状态保存**：为了确保评估时的可复现性，脚本会自动将每个episode的初始环境状态保存为 `_init_state.pkl` 文件。评估时 `imitate_episodes.py` 会尝试加载此文件。
+
+2. **控制模式匹配**：官方 demo 通常使用 `pd_joint_pos`（关节绝对位置控制），请确保 `--control_mode` 参数与 demo 一致。
+
+3. **触觉数据**：触觉数据通过 `link.get_net_contact_forces()` 获取夹爪指尖的接触力，为 6 维向量（左右手指各 3D 力）。
+
+4. **状态 Replay 方式**：脚本使用 demo 中保存的环境状态进行 replay（而非物理仿真），确保 100% 成功率和准确的观测数据。
+
+5. **GPU 要求**：ManiSkill 运行时会使用 GPU，返回的观测数据为 CUDA tensor，脚本已自动处理转换。
+
+### 支持的 ManiSkill 环境
+
+- `PickCube-v1` - 抓取立方体
+- 其他环境请参考 [ManiSkill 文档](https://maniskill.readthedocs.io/)
+
+## 📦 项目结构
+
+```
+VTLA-ACT/
+├── scripts/
+│   ├── record_maniskill_episodes.py  # ManiSkill 数据采集
+│   ├── convert_maniskill_to_act.py   # 数据格式转换
+│   └── evaluate_maniskill.py         # 在线验证
+├── detr/
+│   └── models/
+│       ├── tactile_encoder.py        # 触觉编码器
+│       └── detr_vae.py               # 支持触觉的 DETR-VAE
+├── maniskill_env.py                  # ManiSkill 环境包装器
+├── policy.py                         # ACT 策略（含触觉支持）
+├── utils.py                          # 数据加载工具
+└── constants.py                      # 任务配置
+```
+
+## 📄 License
+
+MIT License

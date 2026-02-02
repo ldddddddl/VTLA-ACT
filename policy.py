@@ -2,7 +2,11 @@ import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms as transforms
 
-from detr.main import build_ACT_model_and_optimizer, build_CNNMLP_model_and_optimizer
+from detr.main import (
+    build_ACT_model_and_optimizer, 
+    build_CNNMLP_model_and_optimizer,
+    build_ACT_model_and_optimizer_with_tactile,
+)
 import IPython
 e = IPython.embed
 
@@ -68,6 +72,67 @@ class CNNMLPPolicy(nn.Module):
     def configure_optimizers(self):
         return self.optimizer
 
+
+class ACTPolicyWithTactile(nn.Module):
+    """
+    ACT Policy with tactile modality support.
+    
+    This extends ACTPolicy to incorporate tactile observations
+    in both training and inference.
+    """
+    
+    def __init__(self, args_override):
+        super().__init__()
+        model, optimizer = build_ACT_model_and_optimizer_with_tactile(args_override)
+        self.model = model
+        self.optimizer = optimizer
+        self.kl_weight = args_override.get('kl_weight', 10)
+        self.use_tactile = args_override.get('use_tactile', True)
+        print(f'KL Weight {self.kl_weight}')
+        print(f'Use Tactile: {self.use_tactile}')
+
+    def __call__(self, qpos, image, actions=None, is_pad=None, tactile=None):
+        """
+        Forward pass with tactile support.
+        
+        Args:
+            qpos: Robot joint positions (batch, qpos_dim)
+            image: Camera images (batch, num_cam, C, H, W)
+            actions: Action sequence for training (batch, seq, action_dim)
+            is_pad: Padding mask for actions (batch, seq)
+            tactile: Tactile observations (batch, tactile_dim)
+        """
+        env_state = None
+        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+        image = normalize(image)
+        
+        if actions is not None:  # Training time
+            actions = actions[:, :self.model.num_queries]
+            is_pad = is_pad[:, :self.model.num_queries]
+
+            a_hat, is_pad_hat, (mu, logvar) = self.model(
+                qpos, image, env_state, actions, is_pad, tactile=tactile
+            )
+            total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
+            
+            loss_dict = dict()
+            all_l1 = F.l1_loss(actions, a_hat, reduction='none')
+            l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+            loss_dict['l1'] = l1
+            loss_dict['kl'] = total_kld[0]
+            loss_dict['loss'] = loss_dict['l1'] + loss_dict['kl'] * self.kl_weight
+            return loss_dict
+        else:  # Inference time
+            a_hat, _, (_, _) = self.model(
+                qpos, image, env_state, tactile=tactile
+            )
+            return a_hat
+
+    def configure_optimizers(self):
+        return self.optimizer
+
+
 def kl_divergence(mu, logvar):
     batch_size = mu.size(0)
     assert batch_size != 0
@@ -82,3 +147,4 @@ def kl_divergence(mu, logvar):
     mean_kld = klds.mean(1).mean(0, True)
 
     return total_kld, dimension_wise_kld, mean_kld
+

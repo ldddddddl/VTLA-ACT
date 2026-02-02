@@ -1,0 +1,28 @@
+[project]
+name = "vtla-act"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "pyquaternion",
+  "pyyaml",
+  "rospkg",
+  "pexpect",
+  "mujoco==2.3.7",
+  "dm_control==1.0.14",
+  "opencv-python",
+  "matplotlib",
+  "einops",
+  "packaging",
+  "h5py",
+  "ipython",
+  "mani-skill",
+  "torchvision>=0.23.0",
+  "python-util>=1.2.1",
+]
+
+
+[[tool.uv.index]]
+name = "tuna"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple/"

@@ -1,4 +1,4 @@
-name: aloha
+name: VTLA-ACT
 channels:
   - pytorch
   - nvidia
